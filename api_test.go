@@ -67,6 +67,22 @@ func Test_ReadPoints(t *testing.T) {
     assert.Nil(t, err, "We are expecting error and got one")
 }
 
+func Test_ShowDB(t *testing.T) {
+    testDB := InitSession()
+    testDB.CreateDB("titi")
+    _, err := testDB.ShowDB()
+    assert.Nil(t, err, "We are expecting error and got one")
+}
+
+func Test_ExistDB(t *testing.T) {
+    testDB := InitSession()
+    testDB.CreateDB("testdb2")
+    check, err := testDB.ExistDB("testdb2")
+    assert.Nil(t, err, "We are expecting error and got one")
+    assert.Equal(t, check, true, "they should be equal")
+}
+
+
 func Test_DropDB(t *testing.T) {
     testDB := NewInfluxDB("localhost", "8086", "testdb", "admin", "admin")
     testDB.Connect()

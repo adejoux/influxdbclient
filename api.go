@@ -76,6 +76,20 @@ func (db *InfluxDB) queryDB(cmd string, dbname string) (res []client.Result, err
     return
 }
 
+// query convenience function to query Influxdb
+func (db *InfluxDB) query(cmd string) (res []client.Result, err error) {
+    query := client.Query{
+        Command:  cmd,
+    }
+
+    if response, err := db.con.Query(query); err == nil {
+        if response.Error() != nil {
+            return res, response.Error()
+        }
+        res = response.Results
+    }
+    return
+}
 func (db *InfluxDB) CreateDB(dbname string) (res []client.Result, err error) {
     cmd := fmt.Sprintf("create database %s", dbname)
     res, err = db.queryDB(cmd, dbname)
@@ -85,6 +99,40 @@ func (db *InfluxDB) CreateDB(dbname string) (res []client.Result, err error) {
 func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
     cmd := fmt.Sprintf("drop database %s", dbname)
     res, err = db.queryDB(cmd, dbname)
+    return
+}
+
+func (db *InfluxDB) ShowDB() (databases []string, err error) {
+    cmd := fmt.Sprintf("show databases")
+    res, err := db.query(cmd)
+    if err != nil {
+        return
+    }
+
+    for _, dbs := range  res[0].Series[0].Values {
+        for _, db := range dbs {
+            if str, ok := db.(string); ok {
+                databases = append(databases, str)
+            }
+        }
+    }
+    return
+}
+
+func (db *InfluxDB) ExistDB(dbname string) (check bool, err error) {
+    dbs, err := db.ShowDB()
+    check = false
+
+    if err != nil {
+        return
+    }
+
+    for _, val := range dbs {
+        if dbname == val {
+            check = true
+            return
+        }
+    }
     return
 }
 
@@ -163,6 +211,5 @@ func ConvertToDataSet(res []client.Result) (*DataSet) {
             }
         }
     }
-    fmt.Println(ds)
     return ds
 }

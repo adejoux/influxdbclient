@@ -1,235 +1,217 @@
 package influxdbclient
 
 import "github.com/influxdb/influxdb/client"
-import "net/url"
-import "time"
 import "fmt"
+import "time"
+import "strings"
+import "strconv"
 import "encoding/json"
 
+//
+// DataSerie structure
+// contains the columns and points to insert in InfluxDB
+//
+
+type DataSerie struct {
+	Columns  []string
+	PointSeq int
+	Points   [50][]interface{}
+}
+
+//
+// influxDB structure
+// contains the main structures and methods used to parse nmon files and upload data in Influxdb
+//
+
 type InfluxDB struct {
-	host   string
-	port   string
-	db     string
-	user   string
-	pass   string
-	debug  bool
-	count  int64
-	points []client.Point
-	con    *client.Client
+	Client      *client.Client
+	MaxPoints   int
+	DataSeries  map[string]DataSerie
+	TextContent string
+	Label       string
+	debug       bool
+	starttime   int64
+	stoptime    int64
 }
 
-type DataSet struct {
-	Name       string
-	TimeStamps []time.Time
-	Datas      map[string][]float64
+// initialize a Influx structure
+func NewInfluxDB() *InfluxDB {
+	return &InfluxDB{DataSeries: make(map[string]DataSerie), MaxPoints: 50}
+
 }
 
-func NewInfluxDB(host string, port string, database string, user string, pass string) *InfluxDB {
-	return &InfluxDB{host: host, port: port, db: database, user: user, pass: pass, points: make([]client.Point, 1000), count: 0}
+func (db *InfluxDB) GetColumns(serie string) []string {
+	return db.DataSeries[serie].Columns
 }
+
+func (db *InfluxDB) GetFilteredColumns(serie string, filter string) []string {
+	var res []string
+	for _, field := range db.DataSeries[serie].Columns {
+		if strings.Contains(field, filter) {
+			res = append(res, field)
+		}
+	}
+	return res
+}
+
+// func (db *InfluxDB) AppendText(text string) {
+// 	db.TextContent += ReplaceComma(text)
+// }
 
 func (db *InfluxDB) SetDebug(debug bool) {
 	db.debug = true
 }
 
-func (db *InfluxDB) Connect() error {
-	u, err := url.Parse(fmt.Sprintf("http://%s:%s", db.host, db.port))
-	if err != nil {
-		return err
-	}
-
-	conf := client.Config{
-		URL:      *u,
-		Username: db.user,
-		Password: db.pass,
-	}
-
-	db.con, err = client.NewClient(conf)
-	if err != nil {
-		return err
-	}
-
-	dur, ver, err := db.con.Ping()
-	if err != nil {
-		return err
-	}
-
-	if db.debug == true {
-		fmt.Printf("time : %v, version : %s\n", dur, ver)
-	}
-
-	return err
-}
-
-// queryDB convenience function to query the database
-func (db *InfluxDB) queryDB(cmd string, dbname string) (res []client.Result, err error) {
-	query := client.Query{
-		Command:  cmd,
-		Database: dbname,
-	}
-	if response, err := db.con.Query(query); err == nil {
-		if response.Error() != nil {
-			return res, response.Error()
-		}
-		res = response.Results
+func (db *InfluxDB) CreateDB(dbname string) (err error) {
+	if err = db.Client.CreateDatabase(dbname); err != nil {
+		return
 	}
 	return
 }
 
-// query convenience function to query Influxdb
-func (db *InfluxDB) query(cmd string) (res []client.Result, err error) {
-	query := client.Query{
-		Command: cmd,
+func (db *InfluxDB) DropDB(dbname string) (err error) {
+	if err = db.Client.DeleteDatabase(dbname); err != nil {
+		return
 	}
-
-	if response, err := db.con.Query(query); err == nil {
-		if response.Error() != nil {
-			return res, response.Error()
-		}
-		res = response.Results
-	}
-	return
-}
-func (db *InfluxDB) CreateDB(dbname string) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("create database %s", dbname)
-	res, err = db.queryDB(cmd, dbname)
-	return
-}
-
-func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("drop database %s", dbname)
-	res, err = db.queryDB(cmd, dbname)
 	return
 }
 
 func (db *InfluxDB) ShowDB() (databases []string, err error) {
-	cmd := fmt.Sprintf("show databases")
-	res, err := db.query(cmd)
-	if err != nil {
-		return
+	dblist, err := db.Client.GetDatabaseList()
+	for _, v := range dblist {
+		databases = append(databases, v["name"].(string))
 	}
 
-	if db.debug == true {
-		fmt.Println(res)
-	}
-
-	if res == nil {
-		return
-	}
-
-	for _, dbs := range res[0].Series[0].Values {
-		for _, db := range dbs {
-			if str, ok := db.(string); ok {
-				databases = append(databases, str)
-			}
-		}
-	}
 	return
 }
 
-func (db *InfluxDB) ExistDB(dbname string) (check bool, err error) {
-	dbs, err := db.ShowDB()
+func (db *InfluxDB) ExistDB(dbname string) (check bool) {
 	check = false
-
+	dbs, err := db.ShowDB()
 	if err != nil {
 		return
 	}
 
-	for _, val := range dbs {
-		if dbname == val {
+	//checking if database exists
+	for _, v := range dbs {
+		if v == dbname {
 			check = true
-			return
 		}
 	}
 	return
 }
 
-func (db *InfluxDB) AddPoint(name string, timestamp time.Time, fields map[string]interface{}, tags map[string]string) {
-	db.AddPrecisePoint(name, timestamp, fields, tags, "s")
+func (db *InfluxDB) SetDataSerie(name string, columns []string) {
+	dataserie := db.DataSeries[name]
+	dataserie.Columns = columns
+	db.DataSeries[name] = dataserie
 }
 
-func (db *InfluxDB) AddPrecisePoint(name string, timestamp time.Time, fields map[string]interface{}, tags map[string]string, precision string) {
+func (db *InfluxDB) AddPoint(serie string, strtimestamp string, elems []string) {
 
-	point := client.Point{
-		Name:      name,
-		Fields:    fields,
-		Tags:      tags,
-		Time:      timestamp,
-		Precision: precision,
+	timestamp, err := ConvertTimeStamp(strtimestamp)
+
+	if err != nil {
+		if db.debug {
+			fmt.Printf("Skipping point.Unable to convert timestamp : %s\n", strtimestamp)
+		}
+		return
 	}
 
-	if len(tags) > 0 {
-		point.Tags = tags
+	dataSerie := db.DataSeries[serie]
+
+	if len(dataSerie.Columns) == 0 {
+		//fmt.Printf("No defined fields for %s. No datas inserted\n", serie)
+		return
 	}
 
-	db.points[db.count] = point
-	db.count += 1
+	if len(dataSerie.Columns) != len(elems) {
+		return
+	}
+
+	point := []interface{}{}
+	point = append(point, timestamp)
+	for i := 0; i < len(elems); i++ {
+		// try to convert string to integer
+		value, err := strconv.ParseFloat(elems[i], 64)
+		if err != nil {
+			//if not working, use string
+			point = append(point, elems[i])
+		} else {
+			//send integer if it worked
+			point = append(point, value)
+		}
+	}
+
+	dataSerie.Points[dataSerie.PointSeq] = point
+	dataSerie.PointSeq += 1
+	db.DataSeries[serie] = dataSerie
 }
 
-func (db *InfluxDB) WritePoints() (err error) {
-	bps := client.BatchPoints{
-		Points:          db.points[:db.count],
-		Database:        db.db,
-		RetentionPolicy: "default",
+func (db *InfluxDB) WritePoints(serie string) (err error) {
+
+	dataSerie := db.DataSeries[serie]
+	series := &client.Series{}
+
+	series.Name = db.Label + "_" + serie
+
+	series.Columns = append([]string{"time"}, dataSerie.Columns...)
+
+	for i := 0; i < len(dataSerie.Points); i++ {
+		if dataSerie.Points[i] == nil {
+			break
+		}
+		series.Points = append(series.Points, dataSerie.Points[i])
 	}
 
-	_, err = db.con.Write(bps)
+	if err = db.Client.WriteSeriesWithTimePrecision([]*client.Series{series}, "s"); err != nil {
+		data, err2 := json.Marshal(series)
+		if err2 != nil {
+			return err2
+		}
+		fmt.Printf("%s\n", data)
+		return
+	}
 	return
 }
 
-func (db *InfluxDB) PointsCount() int64 {
-	return db.count + 1
+func (db *InfluxDB) PointsCount(serie string) int {
+	return db.DataSeries[serie].PointSeq
 }
 
-func (db *InfluxDB) NewPoints() {
-	db.count = 0
+func (db *InfluxDB) NewPoints(serie string) {
+	dataSerie := db.DataSeries[serie]
+	dataSerie.PointSeq = 0
+	db.DataSeries[serie] = dataSerie
 }
 
-func NewDataSet(length int, fields []string) *DataSet {
-	ds := DataSet{TimeStamps: make([]time.Time, length), Datas: make(map[string][]float64)}
+func (db *InfluxDB) InitSession(host string, database string, user string, pass string) (err error) {
+	dbclient, err := client.NewClient(&client.ClientConfig{
+		Host:     host,
+		Username: user,
+		Password: pass,
+		Database: database,
+	})
 
-	for i, fieldname := range fields {
-		if i == 0 {
-			continue
-		}
-		ds.Datas[fieldname] = make([]float64, length)
-	}
-	return &ds
-}
-
-func (db *InfluxDB) ReadPoints(serie string, fields string) (ds *DataSet, err error) {
-	cmd := fmt.Sprintf("select %s from %s", fields, serie)
-	res, err := db.queryDB(cmd, db.db)
 	if err != nil {
 		return
 	}
 
-	ds = ConvertToDataSet(res)
+	dbclient.DisableCompression()
+	db.Client = dbclient
 	return
 }
 
-func ConvertToDataSet(res []client.Result) *DataSet {
-	ds := NewDataSet(len(res[0].Series[0].Values), res[0].Series[0].Columns)
+const timeformat = "15:04:05,02-Jan-2006"
 
-	ds.Name = res[0].Series[0].Name
+func ConvertTimeStamp(s string) (int64, error) {
+	timezone, _ := time.Now().In(time.Local).Zone()
+	loc, err := time.LoadLocation(timezone)
 
-	for i, row := range res[0].Series[0].Values {
-
-		t, _ := time.Parse(time.RFC3339, row[0].(string))
-
-		ds.TimeStamps[i] = t
-
-		for j, field := range row {
-			if j == 0 {
-				continue
-			}
-
-			fieldname := res[0].Series[0].Columns[j]
-			if field != nil {
-				val, _ := field.(json.Number).Float64()
-				ds.Datas[fieldname][i] = val
-			}
-		}
+	if err != nil {
+		loc = time.FixedZone("Europe/Paris", 2*60*60)
 	}
-	return ds
+
+	t, err := time.ParseInLocation(timeformat, s, loc)
+	return t.Unix(), err
 }

@@ -2,7 +2,10 @@ package influxdbclient
 
 import "github.com/influxdb/influxdb/client"
 import "fmt"
+import "sort"
 import "time"
+
+//import "math"
 import "strings"
 import "strconv"
 import "encoding/json"
@@ -16,6 +19,24 @@ type DataSerie struct {
 	Columns  []string
 	PointSeq int
 	Points   [50][]interface{}
+}
+
+//
+// DataSet structure
+// contains the columns and points to analyze for statistics
+//
+
+type DataSet struct {
+	Name       string
+	TimeStamps []float64
+	Datas      map[string][]float64
+}
+
+type DataStats struct {
+	Min    float64
+	Max    float64
+	Mean   float64
+	Median float64
 }
 
 //
@@ -59,7 +80,7 @@ func (db *InfluxDB) GetFilteredColumns(serie string, filter string) []string {
 // }
 
 func (db *InfluxDB) SetDebug(debug bool) {
-	db.debug = true
+	db.debug = debug
 }
 
 func (db *InfluxDB) CreateDB(dbname string) (err error) {
@@ -121,7 +142,9 @@ func (db *InfluxDB) AddPoint(serie string, strtimestamp string, elems []string) 
 	dataSerie := db.DataSeries[serie]
 
 	if len(dataSerie.Columns) == 0 {
-		//fmt.Printf("No defined fields for %s. No datas inserted\n", serie)
+		if db.debug {
+			fmt.Printf("No defined fields for %s. No datas inserted\n", serie)
+		}
 		return
 	}
 
@@ -144,7 +167,7 @@ func (db *InfluxDB) AddPoint(serie string, strtimestamp string, elems []string) 
 	}
 
 	dataSerie.Points[dataSerie.PointSeq] = point
-	dataSerie.PointSeq += 1
+	dataSerie.PointSeq++
 	db.DataSeries[serie] = dataSerie
 }
 
@@ -169,7 +192,6 @@ func (db *InfluxDB) WritePoints(serie string) (err error) {
 		if err2 != nil {
 			return err2
 		}
-		fmt.Printf("%s\n", data)
 		return
 	}
 	return
@@ -179,7 +201,14 @@ func (db *InfluxDB) PointsCount(serie string) int {
 	return db.DataSeries[serie].PointSeq
 }
 
-func (db *InfluxDB) NewPoints(serie string) {
+func (db *InfluxDB) MaxPointsCount(serie string) bool {
+	if db.DataSeries[serie].PointSeq == db.MaxPoints {
+		return true
+	}
+	return false
+}
+
+func (db *InfluxDB) ClearPoints(serie string) {
 	dataSerie := db.DataSeries[serie]
 	dataSerie.PointSeq = 0
 	db.DataSeries[serie] = dataSerie
@@ -214,4 +243,127 @@ func ConvertTimeStamp(s string) (int64, error) {
 
 	t, err := time.ParseInLocation(timeformat, s, loc)
 	return t.Unix(), err
+}
+
+func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to string, function string) (ds *DataSet, err error) {
+	cmd := buildQuery(fields, serie, from, to, function)
+	if db.debug {
+		fmt.Printf("query: %s\n", cmd)
+	}
+	res, err := db.Client.Query(cmd)
+	if err != nil {
+		return
+	}
+	fmt.Println(res)
+	ds = ConvertToDataSet(res)
+	return
+}
+
+const querytimeformat = "2006-01-02 15:04:05"
+
+func buildQuery(fields string, serie string, from string, to string, function string) (query string) {
+	if len(function) > 0 {
+		query = fmt.Sprintf("select %s(%s) from %s", function, fields, serie)
+	} else {
+		query = fmt.Sprintf("select %s from %s", fields, serie)
+	}
+
+	if len(from) == 0 {
+		return
+	}
+
+	fromUnix, _ := ConvertTimeStamp(from)
+	fromtime := time.Unix(fromUnix, 0).UTC().Format(querytimeformat)
+	if len(to) == 0 {
+		query = fmt.Sprintf("%s where time > '%s'", query, fromtime)
+		return
+	}
+	toUnix, _ := ConvertTimeStamp(to)
+
+	totime := time.Unix(toUnix, 0).UTC().Format(querytimeformat)
+	query = fmt.Sprintf("%s where time > '%s' and time < '%s'", query, fromtime, totime)
+	return
+}
+
+func (db *InfluxDB) ReadAllPoints(fields string, serie string) (ds *DataSet, err error) {
+	cmd := fmt.Sprintf("select %s from %s", fields, serie)
+	res, err := db.Client.Query(cmd)
+	if err != nil {
+		return
+	}
+
+	ds = ConvertToDataSet(res)
+	return
+}
+
+func NewDataSet(length int, fields []string) *DataSet {
+	ds := DataSet{TimeStamps: make([]float64, length), Datas: make(map[string][]float64)}
+
+	for _, fieldname := range fields {
+		ds.Datas[fieldname] = make([]float64, length)
+	}
+	return &ds
+}
+
+func ConvertToDataSet(res []*client.Series) *DataSet {
+	if len(res) == 0 {
+		return new(DataSet)
+	}
+
+	ds := NewDataSet(len(res[0].Points), res[0].Columns[2:])
+
+	ds.Name = res[0].Name
+
+	for i, row := range res[0].Points {
+
+		ds.TimeStamps[i] = row[0].(float64)
+
+		for j, field := range row {
+			if j == 0 {
+				continue
+			}
+			if j == 1 {
+				continue
+			}
+			fieldname := res[0].Columns[j]
+			if field != nil {
+				val, _ := field.(float64)
+				ds.Datas[fieldname][i] = val
+			}
+		}
+	}
+	return ds
+}
+
+func (db *InfluxDB) BuildStats(ds *DataSet) (stats map[string]DataStats) {
+	stats = make(map[string]DataStats)
+	for name, data := range ds.Datas {
+		length := len(data)
+
+		//sorting data
+		sort.Float64s(data)
+		var stat DataStats
+		stat.Min = data[0]
+		stat.Max = data[length-1]
+		stat.Mean = Mean(data)
+		if length%2 == 0 {
+			stat.Median = Mean(data[length/2-1 : length/2+1])
+		} else {
+			stat.Median = float64(data[length/2])
+		}
+		stats[name] = stat
+	}
+	return
+}
+
+func Sum(data []float64) (sum float64) {
+	for _, n := range data {
+		sum += n
+	}
+	return sum
+}
+
+func Mean(data []float64) (mean float64) {
+	sum := Sum(data)
+	return sum / float64(len(data))
 }

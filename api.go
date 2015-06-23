@@ -31,12 +31,68 @@ type DataSet struct {
 	Datas      map[string][]float64
 }
 
-type DataStats struct {
+type DataStat struct {
+	Name   string
 	Min    float64
 	Max    float64
 	Mean   float64
 	Median float64
 	Length int
+}
+
+type DataStats []DataStat
+
+func (ds *DataStats) FieldSort(field string) {
+	switch field {
+	case "name":
+		sort.Sort(NameDataStats{*ds})
+	case "min":
+		sort.Sort(MinDataStats{*ds})
+	case "max":
+		sort.Sort(MaxDataStats{*ds})
+	case "median":
+		sort.Sort(MedianDataStats{*ds})
+	default:
+		sort.Sort(MeanDataStats{*ds})
+	}
+}
+
+func (slice DataStats) Len() int {
+	return len(slice)
+}
+
+func (slice DataStats) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
+}
+
+type NameDataStats struct{ DataStats }
+
+func (slice NameDataStats) Less(i, j int) bool {
+	return slice.DataStats[i].Name > slice.DataStats[j].Name
+}
+
+type MinDataStats struct{ DataStats }
+
+func (slice MinDataStats) Less(i, j int) bool {
+	return slice.DataStats[i].Min > slice.DataStats[j].Min
+}
+
+type MaxDataStats struct{ DataStats }
+
+func (slice MaxDataStats) Less(i, j int) bool {
+	return slice.DataStats[i].Max > slice.DataStats[j].Max
+}
+
+type MeanDataStats struct{ DataStats }
+
+func (slice MeanDataStats) Less(i, j int) bool {
+	return slice.DataStats[i].Mean > slice.DataStats[j].Mean
+}
+
+type MedianDataStats struct{ DataStats }
+
+func (slice MedianDataStats) Less(i, j int) bool {
+	return slice.DataStats[i].Median > slice.DataStats[j].Median
 }
 
 //
@@ -309,14 +365,14 @@ func ConvertToDataSet(res []*client.Series) *DataSet {
 	return ds
 }
 
-func (db *InfluxDB) BuildStats(ds *DataSet) (stats map[string]DataStats) {
-	stats = make(map[string]DataStats)
+func (db *InfluxDB) BuildStats(ds *DataSet) (stats DataStats) {
 	for name, data := range ds.Datas {
 		length := len(data)
 
 		//sorting data
 		sort.Float64s(data)
-		var stat DataStats
+		var stat DataStat
+		stat.Name = name
 		stat.Min = data[0]
 		stat.Max = data[length-1]
 		stat.Mean = Mean(data)
@@ -326,7 +382,7 @@ func (db *InfluxDB) BuildStats(ds *DataSet) (stats map[string]DataStats) {
 		} else {
 			stat.Median = float64(data[length/2])
 		}
-		stats[name] = stat
+		stats = append(stats, stat)
 	}
 	return
 }

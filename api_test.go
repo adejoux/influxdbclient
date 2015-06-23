@@ -78,8 +78,8 @@ func Test_BuildStats(t *testing.T) {
 	testDB := NewInfluxDB()
 	testDB.InitSession("localhost:8086", "testdb", "root", "root")
 	result, err := testDB.ReadAllPoints("*", "_test2")
-	dataset := testDB.BuildStats(result)
-	fmt.Println(dataset)
+	stats := testDB.BuildStats(result)
+	fmt.Println(stats)
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 

@@ -3,7 +3,6 @@ package influxdbclient
 import "github.com/influxdb/influxdb/client"
 import "fmt"
 import "sort"
-import "time"
 
 //import "math"
 import "strings"
@@ -37,6 +36,7 @@ type DataStats struct {
 	Max    float64
 	Mean   float64
 	Median float64
+	Length int
 }
 
 //
@@ -128,16 +128,7 @@ func (db *InfluxDB) SetDataSerie(name string, columns []string) {
 	db.DataSeries[name] = dataserie
 }
 
-func (db *InfluxDB) AddPoint(serie string, strtimestamp string, elems []string) {
-
-	timestamp, err := ConvertTimeStamp(strtimestamp)
-
-	if err != nil {
-		if db.debug {
-			fmt.Printf("Skipping point.Unable to convert timestamp : %s\n", strtimestamp)
-		}
-		return
-	}
+func (db *InfluxDB) AddPoint(serie string, timestamp int64, elems []string) {
 
 	dataSerie := db.DataSeries[serie]
 
@@ -192,6 +183,7 @@ func (db *InfluxDB) WritePoints(serie string) (err error) {
 		if err2 != nil {
 			return err2
 		}
+		fmt.Printf("%s\n", data)
 		return
 	}
 	return
@@ -231,22 +223,8 @@ func (db *InfluxDB) InitSession(host string, database string, user string, pass 
 	return
 }
 
-const timeformat = "15:04:05,02-Jan-2006"
-
-func ConvertTimeStamp(s string) (int64, error) {
-	timezone, _ := time.Now().In(time.Local).Zone()
-	loc, err := time.LoadLocation(timezone)
-
-	if err != nil {
-		loc = time.FixedZone("Europe/Paris", 2*60*60)
-	}
-
-	t, err := time.ParseInLocation(timeformat, s, loc)
-	return t.Unix(), err
-}
-
 func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to string, function string) (ds *DataSet, err error) {
-	cmd := buildQuery(fields, serie, from, to, function)
+	cmd := db.buildQuery(fields, serie, from, to, function)
 	if db.debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
@@ -254,34 +232,30 @@ func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to stri
 	if err != nil {
 		return
 	}
-	fmt.Println(res)
 	ds = ConvertToDataSet(res)
 	return
 }
 
-const querytimeformat = "2006-01-02 15:04:05"
-
-func buildQuery(fields string, serie string, from string, to string, function string) (query string) {
+func (db *InfluxDB) buildQuery(fields string, serie string, from string, to string, function string) (query string) {
 	if len(function) > 0 {
-		query = fmt.Sprintf("select %s(%s) from %s", function, fields, serie)
+		query = fmt.Sprintf("select %s(\"%s\") from \"%s\"", function, fields, serie)
 	} else {
-		query = fmt.Sprintf("select %s from %s", fields, serie)
+		query = fmt.Sprintf("select \"%s\" from \"%s\"", fields, serie)
+		if db.debug {
+			fmt.Printf("query : %s \n", query)
+		}
 	}
 
 	if len(from) == 0 {
 		return
 	}
 
-	fromUnix, _ := ConvertTimeStamp(from)
-	fromtime := time.Unix(fromUnix, 0).UTC().Format(querytimeformat)
 	if len(to) == 0 {
-		query = fmt.Sprintf("%s where time > '%s'", query, fromtime)
+		query = fmt.Sprintf("%s where time > '%s'", query, from)
 		return
 	}
-	toUnix, _ := ConvertTimeStamp(to)
 
-	totime := time.Unix(toUnix, 0).UTC().Format(querytimeformat)
-	query = fmt.Sprintf("%s where time > '%s' and time < '%s'", query, fromtime, totime)
+	query = fmt.Sprintf("%s where time > '%s' and time < '%s'", query, from, to)
 	return
 }
 
@@ -346,6 +320,7 @@ func (db *InfluxDB) BuildStats(ds *DataSet) (stats map[string]DataStats) {
 		stat.Min = data[0]
 		stat.Max = data[length-1]
 		stat.Mean = Mean(data)
+		stat.Length = length
 		if length%2 == 0 {
 			stat.Median = Mean(data[length/2-1 : length/2+1])
 		} else {

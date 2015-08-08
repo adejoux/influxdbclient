@@ -3,6 +3,7 @@ package influxdbclient
 import "github.com/stretchr/testify/assert"
 import "testing"
 import "fmt"
+import "time"
 
 var fields = map[string]interface{}{
 	"rsc": 3711,
@@ -29,64 +30,84 @@ var tags = map[string]string{
 // }
 
 func Test_GoodConnect(t *testing.T) {
-	testDB := NewInfluxDB()
-	err := testDB.InitSession("localhost:8086", "testdb", "root", "root")
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 
 func Test_CreateDB(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	err := testDB.CreateDB("testdb")
-
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	res, err := testDB.CreateDB("testdb")
 	assert.Nil(t, err, "We are expecting no error and got one")
+	assert.NotNil(t, res, "We are expecting no error and got one")
 }
 
 func Test_AddPoint(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	testDB.SetDataSerie("test", []string{"col1", "col2"})
-	testDB.AddPoint("test", "23:55:28,13-MAY-2015", []string{"10", "20"})
-	assert.Equal(t, testDB.PointsCount("test"), 1)
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	ti, _ := ConvertTimeStamp("23:55:28,13-MAY-2015", "Europe/Paris")
+	testDB.AddPoint("test", ti, fields, tags)
+	assert.Nil(t, err, "We are expecting no error and got one")
+	assert.Equal(t, testDB.PointsCount(), 1)
 }
 func Test_WritePoints(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	testDB.SetDataSerie("test2", []string{"col1", "col2"})
-	testDB.AddPoint("test2", "23:55:28,13-MAY-2015", []string{"10", "20"})
-	testDB.AddPoint("test2", "23:55:38,13-MAY-2015", []string{"11", "21"})
-	testDB.AddPoint("test2", "23:55:38,13-MAY-2015", []string{"211", "321"})
-	err := testDB.WritePoints("test2")
-	assert.Nil(t, err, "We are expecting no errors and got one")
-}
-
-func Test_ReadAllPoints(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	_, err := testDB.ReadAllPoints("*", "_test2")
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	ti, _ := ConvertTimeStamp("23:55:28,13-MAY-2015", "Europe/Paris")
+	testDB.AddPoint("test", ti, fields, tags)
+	testDB.AddPoint("test2", ti, fields, tags)
+	ti, _ = ConvertTimeStamp("23:55:28,13-MAY-2015", "Europe/Paris")
+	testDB.AddPoint("test", ti, fields2, tags)
+	testDB.AddPoint("test2", ti, fields2, tags)
+	err = testDB.WritePoints()
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 
 func Test_ReadPoints(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	_, err := testDB.ReadPoints("*", "_test2", "23:55:00,13-MAY-2015", "23:56:00,13-MAY-2015", "")
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	_, err = testDB.ReadPoints("test2", "*")
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 
 func Test_BuildStats(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	result, err := testDB.ReadAllPoints("*", "_test2")
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	result, err := testDB.ReadPoints("test2", "*")
 	stats := testDB.BuildStats(result)
 	fmt.Println(stats)
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 
 func Test_DropDB(t *testing.T) {
-	testDB := NewInfluxDB()
-	testDB.InitSession("localhost:8086", "testdb", "root", "root")
-	err := testDB.DropDB("testdb")
+	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
+	err := testDB.Connect()
+	res, err := testDB.DropDB("testdb")
 
 	assert.Nil(t, err, "We are expecting no error and got one")
+	assert.NotNil(t, res, "We are expecting no error and got one")
+
+}
+
+const timeformat = "15:04:05,02-Jan-2006"
+
+func ConvertTimeStamp(s string, tz string) (time.Time, error) {
+	var err error
+	var loc *time.Location
+	if len(tz) > 0 {
+		loc, err = time.LoadLocation(tz)
+		if err != nil {
+			loc = time.FixedZone("Europe/Paris", 2*60*60)
+		}
+	} else {
+		timezone, _ := time.Now().In(time.Local).Zone()
+		loc, err = time.LoadLocation(timezone)
+		if err != nil {
+			loc = time.FixedZone("Europe/Paris", 2*60*60)
+		}
+	}
+
+	t, err := time.ParseInLocation(timeformat, s, loc)
+	return t, err
 }

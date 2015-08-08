@@ -1,24 +1,11 @@
 package influxdbclient
 
 import "github.com/influxdb/influxdb/client"
+import "net/url"
 import "fmt"
 import "sort"
-
-//import "math"
-import "strings"
-import "strconv"
+import "time"
 import "encoding/json"
-
-//
-// DataSerie structure
-// contains the columns and points to insert in InfluxDB
-//
-
-type DataSerie struct {
-	Columns  []string
-	PointSeq int
-	Points   [50][]interface{}
-}
 
 //
 // DataSet structure
@@ -27,7 +14,7 @@ type DataSerie struct {
 
 type DataSet struct {
 	Name       string
-	TimeStamps []float64
+	TimeStamps []time.Time
 	Datas      map[string][]float64
 }
 
@@ -101,34 +88,56 @@ func (slice MedianDataStats) Less(i, j int) bool {
 //
 
 type InfluxDB struct {
-	Client      *client.Client
-	MaxPoints   int
-	DataSeries  map[string]DataSerie
-	TextContent string
-	Label       string
-	debug       bool
-	starttime   int64
-	stoptime    int64
+	host   string
+	port   string
+	db     string
+	user   string
+	pass   string
+	debug  bool
+	count  int64
+	points []client.Point
+	con    *client.Client
 }
 
 // initialize a Influx structure
-func NewInfluxDB() *InfluxDB {
-	return &InfluxDB{DataSeries: make(map[string]DataSerie), MaxPoints: 50}
-
+func NewInfluxDB(host string, port string, database string, user string, pass string) *InfluxDB {
+	return &InfluxDB{host: host,
+		port:   port,
+		db:     database,
+		user:   user,
+		pass:   pass,
+		points: make([]client.Point, 10000),
+		count:  0}
 }
 
-func (db *InfluxDB) GetColumns(serie string) []string {
-	return db.DataSeries[serie].Columns
-}
-
-func (db *InfluxDB) GetFilteredColumns(serie string, filter string) []string {
-	var res []string
-	for _, field := range db.DataSeries[serie].Columns {
-		if strings.Contains(field, filter) {
-			res = append(res, field)
-		}
+// queryDB convenience function to query the database
+func (db *InfluxDB) queryDB(cmd string, dbname string) (res []client.Result, err error) {
+	query := client.Query{
+		Command:  cmd,
+		Database: dbname,
 	}
-	return res
+	if response, err := db.con.Query(query); err == nil {
+		if response.Error() != nil {
+			return res, response.Error()
+		}
+		res = response.Results
+	}
+	return
+}
+
+// query convenience function to query Influxdb
+func (db *InfluxDB) query(cmd string) (res []client.Result, err error) {
+	query := client.Query{
+		Command: cmd,
+	}
+
+	if response, err := db.con.Query(query); err == nil {
+		if response.Error() != nil {
+			return res, response.Error()
+		}
+		res = response.Results
+	}
+	return
 }
 
 // func (db *InfluxDB) AppendText(text string) {
@@ -139,144 +148,129 @@ func (db *InfluxDB) SetDebug(debug bool) {
 	db.debug = debug
 }
 
-func (db *InfluxDB) CreateDB(dbname string) (err error) {
-	if err = db.Client.CreateDatabase(dbname); err != nil {
-		return
-	}
+func (db *InfluxDB) CreateDB(dbname string) (res []client.Result, err error) {
+	cmd := fmt.Sprintf("create database %s", dbname)
+	res, err = db.queryDB(cmd, dbname)
 	return
 }
 
-func (db *InfluxDB) DropDB(dbname string) (err error) {
-	if err = db.Client.DeleteDatabase(dbname); err != nil {
-		return
-	}
+func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
+	cmd := fmt.Sprintf("drop database %s", dbname)
+	res, err = db.queryDB(cmd, dbname)
 	return
 }
 
 func (db *InfluxDB) ShowDB() (databases []string, err error) {
-	dblist, err := db.Client.GetDatabaseList()
-	for _, v := range dblist {
-		databases = append(databases, v["name"].(string))
+	cmd := fmt.Sprintf("show databases")
+	res, err := db.query(cmd)
+	if err != nil {
+		return
 	}
 
+	if db.debug == true {
+		fmt.Println(res)
+	}
+
+	if res == nil {
+		return
+	}
+
+	for _, dbs := range res[0].Series[0].Values {
+		for _, db := range dbs {
+			if str, ok := db.(string); ok {
+				databases = append(databases, str)
+			}
+		}
+	}
 	return
 }
 
-func (db *InfluxDB) ExistDB(dbname string) (check bool) {
-	check = false
+func (db *InfluxDB) ExistDB(dbname string) (check bool, err error) {
 	dbs, err := db.ShowDB()
+	check = false
+
 	if err != nil {
 		return
 	}
 
-	//checking if database exists
-	for _, v := range dbs {
-		if v == dbname {
+	for _, val := range dbs {
+		if dbname == val {
 			check = true
+			return
 		}
 	}
 	return
 }
 
-func (db *InfluxDB) SetDataSerie(name string, columns []string) {
-	dataserie := db.DataSeries[name]
-	dataserie.Columns = columns
-	db.DataSeries[name] = dataserie
+func (db *InfluxDB) AddPoint(measurement string, timestamp time.Time, fields map[string]interface{}, tags map[string]string) {
+	db.AddPrecisePoint(measurement, timestamp, fields, tags, "s")
 }
 
-func (db *InfluxDB) AddPoint(serie string, timestamp int64, elems []string) {
+func (db *InfluxDB) AddPrecisePoint(measurement string, timestamp time.Time, fields map[string]interface{}, tags map[string]string, precision string) {
 
-	dataSerie := db.DataSeries[serie]
-
-	if len(dataSerie.Columns) == 0 {
-		if db.debug {
-			fmt.Printf("No defined fields for %s. No datas inserted\n", serie)
-		}
-		return
+	point := client.Point{
+		Measurement: measurement,
+		Fields:      fields,
+		Tags:        tags,
+		Time:        timestamp,
+		Precision:   precision,
 	}
 
-	if len(dataSerie.Columns) != len(elems) {
-		return
+	if len(tags) > 0 {
+		point.Tags = tags
 	}
 
-	point := []interface{}{}
-	point = append(point, timestamp)
-	for i := 0; i < len(elems); i++ {
-		// try to convert string to integer
-		value, err := strconv.ParseFloat(elems[i], 64)
-		if err != nil {
-			//if not working, use string
-			point = append(point, elems[i])
-		} else {
-			//send integer if it worked
-			point = append(point, value)
-		}
-	}
-
-	dataSerie.Points[dataSerie.PointSeq] = point
-	dataSerie.PointSeq++
-	db.DataSeries[serie] = dataSerie
+	db.points[db.count] = point
+	db.count += 1
 }
 
-func (db *InfluxDB) WritePoints(serie string) (err error) {
-
-	dataSerie := db.DataSeries[serie]
-	series := &client.Series{}
-
-	series.Name = db.Label + "_" + serie
-
-	series.Columns = append([]string{"time"}, dataSerie.Columns...)
-
-	for i := 0; i < len(dataSerie.Points); i++ {
-		if dataSerie.Points[i] == nil {
-			break
-		}
-		series.Points = append(series.Points, dataSerie.Points[i])
+func (db *InfluxDB) WritePoints() (err error) {
+	bps := client.BatchPoints{
+		Points:           db.points[:db.count],
+		Database:         db.db,
+		RetentionPolicy:  "default",
+		WriteConsistency: client.ConsistencyAny,
 	}
 
-	if err = db.Client.WriteSeriesWithTimePrecision([]*client.Series{series}, "s"); err != nil {
-		data, err2 := json.Marshal(series)
-		if err2 != nil {
-			return err2
-		}
-		fmt.Printf("%s\n", data)
-		return
-	}
+	_, err = db.con.Write(bps)
 	return
 }
 
-func (db *InfluxDB) PointsCount(serie string) int {
-	return db.DataSeries[serie].PointSeq
+func (db *InfluxDB) PointsCount() int64 {
+	return db.count
 }
 
-func (db *InfluxDB) MaxPointsCount(serie string) bool {
-	if db.DataSeries[serie].PointSeq == db.MaxPoints {
-		return true
-	}
-	return false
+func (db *InfluxDB) ClearPoints() {
+	db.count = 0
 }
 
-func (db *InfluxDB) ClearPoints(serie string) {
-	dataSerie := db.DataSeries[serie]
-	dataSerie.PointSeq = 0
-	db.DataSeries[serie] = dataSerie
-}
-
-func (db *InfluxDB) InitSession(host string, database string, user string, pass string) (err error) {
-	dbclient, err := client.NewClient(&client.ClientConfig{
-		Host:     host,
-		Username: user,
-		Password: pass,
-		Database: database,
-	})
-
+func (db *InfluxDB) Connect() error {
+	u, err := url.Parse(fmt.Sprintf("http://%s:%s", db.host, db.port))
 	if err != nil {
-		return
+		return err
 	}
 
-	dbclient.DisableCompression()
-	db.Client = dbclient
-	return
+	conf := client.Config{
+		URL:      *u,
+		Username: db.user,
+		Password: db.pass,
+	}
+
+	db.con, err = client.NewClient(conf)
+	if err != nil {
+		return err
+	}
+
+	dur, ver, err := db.con.Ping()
+	if err != nil {
+		return err
+	}
+
+	if db.debug == true {
+		fmt.Printf("time : %v, version : %s\n", dur, ver)
+	}
+
+	return err
 }
 
 func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to string, function string) (ds *DataSet, err error) {
@@ -284,7 +278,7 @@ func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to stri
 	if db.debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
-	res, err := db.Client.Query(cmd)
+	res, err := db.queryDB(cmd, db.db)
 	if err != nil {
 		return
 	}
@@ -315,19 +309,8 @@ func (db *InfluxDB) buildQuery(fields string, serie string, from string, to stri
 	return
 }
 
-func (db *InfluxDB) ReadAllPoints(fields string, serie string) (ds *DataSet, err error) {
-	cmd := fmt.Sprintf("select %s from %s", fields, serie)
-	res, err := db.Client.Query(cmd)
-	if err != nil {
-		return
-	}
-
-	ds = ConvertToDataSet(res)
-	return
-}
-
 func NewDataSet(length int, fields []string) *DataSet {
-	ds := DataSet{TimeStamps: make([]float64, length), Datas: make(map[string][]float64)}
+	ds := DataSet{TimeStamps: make([]time.Time, length), Datas: make(map[string][]float64)}
 
 	for _, fieldname := range fields {
 		ds.Datas[fieldname] = make([]float64, length)
@@ -335,29 +318,25 @@ func NewDataSet(length int, fields []string) *DataSet {
 	return &ds
 }
 
-func ConvertToDataSet(res []*client.Series) *DataSet {
-	if len(res) == 0 {
-		return new(DataSet)
-	}
+func ConvertToDataSet(res []client.Result) *DataSet {
+	ds := NewDataSet(len(res[0].Series[0].Values), res[0].Series[0].Columns)
 
-	ds := NewDataSet(len(res[0].Points), res[0].Columns[2:])
+	ds.Name = res[0].Series[0].Name
 
-	ds.Name = res[0].Name
+	for i, row := range res[0].Series[0].Values {
 
-	for i, row := range res[0].Points {
+		t, _ := time.Parse(time.RFC3339, row[0].(string))
 
-		ds.TimeStamps[i] = row[0].(float64)
+		ds.TimeStamps[i] = t
 
 		for j, field := range row {
 			if j == 0 {
 				continue
 			}
-			if j == 1 {
-				continue
-			}
-			fieldname := res[0].Columns[j]
+
+			fieldname := res[0].Series[0].Columns[j]
 			if field != nil {
-				val, _ := field.(float64)
+				val, _ := field.(json.Number).Float64()
 				ds.Datas[fieldname][i] = val
 			}
 		}

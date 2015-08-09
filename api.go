@@ -15,6 +15,7 @@ import "encoding/json"
 type DataSet struct {
 	Name       string
 	TimeStamps []time.Time
+	Tags       map[string]string
 	Datas      map[string][]float64
 }
 
@@ -273,8 +274,8 @@ func (db *InfluxDB) Connect() error {
 	return err
 }
 
-func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to string, function string) (ds *DataSet, err error) {
-	cmd := db.buildQuery(fields, serie, from, to, function)
+func (db *InfluxDB) ReadPoints(fields string, tags map[string]string, groupby string, serie string, from string, to string, function string) (ds []*DataSet, err error) {
+	cmd := db.buildQuery(fields, tags, groupby, serie, from, to, function)
 	if db.debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
@@ -286,7 +287,7 @@ func (db *InfluxDB) ReadPoints(fields string, serie string, from string, to stri
 	return
 }
 
-func (db *InfluxDB) buildQuery(fields string, serie string, from string, to string, function string) (query string) {
+func (db *InfluxDB) buildQuery(fields string, tags map[string]string, groupby string, serie string, from string, to string, function string) (query string) {
 	if len(function) > 0 {
 		query = fmt.Sprintf("select %s(\"%s\") from \"%s\"", function, fields, serie)
 	} else {
@@ -305,7 +306,18 @@ func (db *InfluxDB) buildQuery(fields string, serie string, from string, to stri
 		return
 	}
 
-	query = fmt.Sprintf("%s where time > '%s' and time < '%s'", query, from, to)
+	query = fmt.Sprintf("%s where time > '%s' AND time < '%s'", query, from, to)
+
+	if len(tags) > 0 {
+
+		for key, value := range tags {
+			query = fmt.Sprintf("%s AND %s = '%s'", query, key, value)
+		}
+	}
+
+	if len(groupby) > 0 {
+		query = fmt.Sprintf("%s GROUP BY %s", query, groupby)
+	}
 	return
 }
 
@@ -318,50 +330,68 @@ func NewDataSet(length int, fields []string) *DataSet {
 	return &ds
 }
 
-func ConvertToDataSet(res []client.Result) *DataSet {
-	ds := NewDataSet(len(res[0].Series[0].Values), res[0].Series[0].Columns)
+func ConvertToDataSet(res []client.Result) (dsets []*DataSet) {
+	if len(res[0].Series) == 0 {
+		return
+	}
 
-	ds.Name = res[0].Series[0].Name
+	for _, serie := range res[0].Series {
+		ds := NewDataSet(len(serie.Values), serie.Columns[1:])
 
-	for i, row := range res[0].Series[0].Values {
+		ds.Name = serie.Name
+		ds.Tags = serie.Tags
+		for i, row := range serie.Values {
 
-		t, _ := time.Parse(time.RFC3339, row[0].(string))
+			t, _ := time.Parse(time.RFC3339, row[0].(string))
 
-		ds.TimeStamps[i] = t
+			ds.TimeStamps[i] = t
 
-		for j, field := range row {
-			if j == 0 {
-				continue
-			}
+			for j, field := range row {
+				if j == 0 {
+					continue
+				}
 
-			fieldname := res[0].Series[0].Columns[j]
-			if field != nil {
-				val, _ := field.(json.Number).Float64()
-				ds.Datas[fieldname][i] = val
+				fieldname := serie.Columns[j]
+				if field != nil {
+					val, _ := field.(json.Number).Float64()
+					ds.Datas[fieldname][i] = val
+				}
 			}
 		}
+		dsets = append(dsets, ds)
 	}
-	return ds
+	return
 }
 
-func (db *InfluxDB) BuildStats(ds *DataSet) (stats DataStats) {
-	for name, data := range ds.Datas {
-		length := len(data)
+func (db *InfluxDB) BuildStats(dsets []*DataSet) (stats DataStats) {
+	for _, ds := range dsets {
+		for name, data := range ds.Datas {
+			length := len(data)
 
-		//sorting data
-		sort.Float64s(data)
-		var stat DataStat
-		stat.Name = name
-		stat.Min = data[0]
-		stat.Max = data[length-1]
-		stat.Mean = Mean(data)
-		stat.Length = length
-		if length%2 == 0 {
-			stat.Median = Mean(data[length/2-1 : length/2+1])
-		} else {
-			stat.Median = float64(data[length/2])
+			//sorting data
+			sort.Float64s(data)
+			var stat DataStat
+			if len(ds.Tags) > 0 {
+				for _, tagValue := range ds.Tags {
+					if len(stat.Name) > 0 {
+						stat.Name = stat.Name + "_"
+					}
+					stat.Name = stat.Name + tagValue
+				}
+			} else {
+				stat.Name = name
+			}
+			stat.Min = data[0]
+			stat.Max = data[length-1]
+			stat.Mean = Mean(data)
+			stat.Length = length
+			if length%2 == 0 {
+				stat.Median = Mean(data[length/2-1 : length/2+1])
+			} else {
+				stat.Median = float64(data[length/2])
+			}
+			stats = append(stats, stat)
 		}
-		stats = append(stats, stat)
 	}
 	return
 }

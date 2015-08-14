@@ -30,6 +30,18 @@ type DataStat struct {
 
 type DataStats []DataStat
 
+type Filter struct {
+	Tag   string
+	Value string
+	Mode  string
+}
+
+type Filters []Filter
+
+func (filters *Filters) Add(tag string, value string, mode string) {
+	*filters = append(*filters, Filter{Tag: tag, Value: value, Mode: mode})
+}
+
 func (ds *DataStats) FieldSort(field string) {
 	switch field {
 	case "name":
@@ -274,8 +286,8 @@ func (db *InfluxDB) Connect() error {
 	return err
 }
 
-func (db *InfluxDB) ReadPoints(fields string, tags map[string]string, groupby string, serie string, from string, to string, function string) (ds []*DataSet, err error) {
-	cmd := db.buildQuery(fields, tags, groupby, serie, from, to, function)
+func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, serie string, from string, to string, function string) (ds []*DataSet, err error) {
+	cmd := db.buildQuery(fields, filters, groupby, serie, from, to, function)
 	if db.debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
@@ -287,7 +299,7 @@ func (db *InfluxDB) ReadPoints(fields string, tags map[string]string, groupby st
 	return
 }
 
-func (db *InfluxDB) buildQuery(fields string, tags map[string]string, groupby string, serie string, from string, to string, function string) (query string) {
+func (db *InfluxDB) buildQuery(fields string, filters *Filters, groupby string, serie string, from string, to string, function string) (query string) {
 	if len(function) > 0 {
 		query = fmt.Sprintf("select %s(\"%s\") from \"%s\"", function, fields, serie)
 	} else {
@@ -308,10 +320,14 @@ func (db *InfluxDB) buildQuery(fields string, tags map[string]string, groupby st
 
 	query = fmt.Sprintf("%s where time > '%s' AND time < '%s'", query, from, to)
 
-	if len(tags) > 0 {
-
-		for key, value := range tags {
-			query = fmt.Sprintf("%s AND %s = '%s'", query, key, value)
+	if len(*filters) > 0 {
+		for _, filter := range *filters {
+			switch {
+			case filter.Mode == "text":
+				query = fmt.Sprintf("%s AND %s = '%s'", query, filter.Tag, filter.Value)
+			case filter.Mode == "regexp":
+				query = fmt.Sprintf("%s AND %s =~ /%s/", query, filter.Tag, filter.Value)
+			}
 		}
 	}
 

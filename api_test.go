@@ -6,17 +6,17 @@ import "fmt"
 import "time"
 
 var fields = map[string]interface{}{
-	"rsc": 3711,
-	"r":   2138,
-	"gri": 1908,
-	"adg": 912,
+	"a": 3711.0,
+	"b": 2138.0,
+	"c": 1908.0,
+	"d": 912.0,
 }
 
 var fields2 = map[string]interface{}{
-	"rst": 3711,
-	"r":   2138,
-	"gri": 1908,
-	"adg": 912,
+	"a": 3711.0,
+	"b": 2138.0,
+	"c": 1908.0,
+	"d": 912.0,
 }
 
 var tags = map[string]string{
@@ -49,7 +49,7 @@ func Test_AddPoint(t *testing.T) {
 	ti, _ := ConvertTimeStamp("23:55:28,13-MAY-2015", "Europe/Paris")
 	testDB.AddPoint("test", ti, fields, tags)
 	assert.Nil(t, err, "We are expecting no error and got one")
-	assert.Equal(t, testDB.PointsCount(), 1)
+	assert.Equal(t, testDB.PointsCount(), int64(1))
 }
 func Test_WritePoints(t *testing.T) {
 	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
@@ -67,14 +67,16 @@ func Test_WritePoints(t *testing.T) {
 func Test_ReadPoints(t *testing.T) {
 	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
 	err := testDB.Connect()
-	_, err = testDB.ReadPoints("test2", "*")
+	filters := new(Filters)
+	_, err = testDB.ReadPoints("a", filters, "test", "test2", "23:50:00,13-MAY-2015", "23:59:00,13-MAY-2015", "")
 	assert.Nil(t, err, "We are expecting no errors and got one")
 }
 
 func Test_BuildStats(t *testing.T) {
 	testDB := NewInfluxDB("localhost", "8086", "testdb", "root", "root")
 	err := testDB.Connect()
-	result, err := testDB.ReadPoints("test2", "*")
+	filters := new(Filters)
+	result, err := testDB.ReadPoints("a", filters, "test", "test2", "23:50:00,13-MAY-2015", "23:59:00,13-MAY-2015", "")
 	stats := testDB.BuildStats(result)
 	fmt.Println(stats)
 	assert.Nil(t, err, "We are expecting no errors and got one")

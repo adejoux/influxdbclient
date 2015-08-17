@@ -19,6 +19,12 @@ type DataSet struct {
 	Datas      map[string][]float64
 }
 
+type TextSet struct {
+	Name  string
+	Tags  map[string]string
+	Datas []string
+}
+
 type DataStat struct {
 	Name   string
 	Min    float64
@@ -257,6 +263,27 @@ func (db *InfluxDB) ClearPoints() {
 	db.count = 0
 }
 
+func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error) {
+
+	query := "SHOW MEASUREMENTS"
+	var fQuery FilterQuery
+	if len(*filters) > 0 {
+		fQuery.AddFilters(filters)
+	}
+	if len(fQuery.Content) > 0 {
+		query += " WHERE " + fQuery.Content
+	}
+	if db.debug {
+		fmt.Printf("query: %s\n", query)
+	}
+	res, err := db.queryDB(query, db.db)
+	if err != nil {
+		return
+	}
+	return ConvertToTextSet(res), err
+
+}
+
 func (db *InfluxDB) Connect() error {
 	u, err := url.Parse(fmt.Sprintf("http://%s:%s", db.host, db.port))
 	if err != nil {
@@ -299,42 +326,76 @@ func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, 
 	return
 }
 
+type FilterQuery struct {
+	Content string
+}
+
+func (fQuery *FilterQuery) Append(text string) {
+	if len(fQuery.Content) > 0 {
+		fQuery.Content += " AND " + text
+	} else {
+		fQuery.Content = text
+	}
+}
+
 func (db *InfluxDB) buildQuery(fields string, filters *Filters, groupby string, serie string, from string, to string, function string) (query string) {
 	if len(function) > 0 {
-		query = fmt.Sprintf("select %s(\"%s\") from \"%s\"", function, fields, serie)
+		query = fmt.Sprintf("SELECT %s(\"%s\") FROM \"%s\"", function, fields, serie)
 	} else {
-		query = fmt.Sprintf("select \"%s\" from \"%s\"", fields, serie)
-		if db.debug {
-			fmt.Printf("query : %s \n", query)
-		}
+		query = fmt.Sprintf("SELECT \"%s\" FROM \"%s\"", fields, serie)
 	}
 
-	if len(from) == 0 {
-		return
+	var filterQuery FilterQuery
+
+	if len(from) > 0 {
+		filterQuery.Append(fmt.Sprintf("time > '%s'", from))
 	}
 
-	if len(to) == 0 {
-		query = fmt.Sprintf("%s where time > '%s'", query, from)
-		return
+	if len(to) > 0 {
+		filterQuery.Append(fmt.Sprintf("time < '%s'", to))
 	}
-
-	query = fmt.Sprintf("%s where time > '%s' AND time < '%s'", query, from, to)
 
 	if len(*filters) > 0 {
-		for _, filter := range *filters {
-			switch {
-			case filter.Mode == "text":
-				query = fmt.Sprintf("%s AND %s = '%s'", query, filter.Tag, filter.Value)
-			case filter.Mode == "regexp":
-				query = fmt.Sprintf("%s AND %s =~ /%s/", query, filter.Tag, filter.Value)
-			}
-		}
+		filterQuery.AddFilters(filters)
 	}
 
 	if len(groupby) > 0 {
-		query = fmt.Sprintf("%s GROUP BY %s", query, groupby)
+		filterQuery.Append(fmt.Sprintf("GROUP BY %s", groupby))
+	}
+
+	if len(filterQuery.Content) > 0 {
+		query += " WHERE " + filterQuery.Content
 	}
 	return
+}
+
+func (fQuery *FilterQuery) AddFilters(filters *Filters) {
+	for _, filter := range *filters {
+		switch {
+		case filter.Mode == "text":
+			fQuery.Append(fmt.Sprintf("%s = '%s'", filter.Tag, filter.Value))
+		case filter.Mode == "regexp":
+			fQuery.Append(fmt.Sprintf("%s =~ /%s/", filter.Tag, filter.Value))
+		}
+	}
+}
+
+func ConvertToTextSet(res []client.Result) (tset *TextSet) {
+	if len(res[0].Series) == 0 {
+		return
+	}
+	serie := res[0].Series[0]
+	tset = new(TextSet)
+
+	tset.Name = serie.Name
+	tset.Tags = serie.Tags
+
+	for _, row := range serie.Values {
+		for _, field := range row {
+			tset.Datas = append(tset.Datas, field.(string))
+		}
+	}
+	return tset
 }
 
 func NewDataSet(length int, fields []string) *DataSet {

@@ -23,12 +23,12 @@ func buildQuery(fields string, filters *Filters, groupby string, serie string, f
 		filterQuery.AddFilters(filters)
 	}
 
-	if len(groupby) > 0 {
-		filterQuery.Append(fmt.Sprintf("GROUP BY %s", groupby))
-	}
-
 	if len(filterQuery.Content) > 0 {
 		query += " WHERE " + filterQuery.Content
+	}
+
+	if len(groupby) > 0 {
+		query += fmt.Sprintf(" GROUP BY %s", groupby)
 	}
 	return
 }

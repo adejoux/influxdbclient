@@ -125,7 +125,6 @@ func (db *InfluxDB) AddPoint(measurement string, timestamp time.Time, fields map
 }
 
 func (db *InfluxDB) AddPrecisePoint(measurement string, timestamp time.Time, fields map[string]interface{}, tags map[string]string, precision string) {
-
 	point := client.Point{
 		Measurement: measurement,
 		Fields:      fields,
@@ -146,6 +145,7 @@ func (db *InfluxDB) WritePoints() (err error) {
 	bps := client.BatchPoints{
 		Points:           db.points[:db.count],
 		Database:         db.db,
+		Precision:			"s",
 		RetentionPolicy:  "default",
 		WriteConsistency: client.ConsistencyAny,
 	}

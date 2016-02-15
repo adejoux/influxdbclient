@@ -30,9 +30,9 @@ func (fQuery *FilterQuery) AddFilters(filters *Filters) {
 	for _, filter := range *filters {
 		switch {
 		case filter.Mode == "text":
-			fQuery.Append(fmt.Sprintf("%s = '%s'", filter.Tag, filter.Value))
+			fQuery.Append(fmt.Sprintf("\"%s\" = '%s'", filter.Tag, filter.Value))
 		case filter.Mode == "regexp":
-			fQuery.Append(fmt.Sprintf("%s =~ /%s/", filter.Tag, filter.Value))
+			fQuery.Append(fmt.Sprintf("\"%s\" =~ /%s/", filter.Tag, filter.Value))
 		}
 	}
 }

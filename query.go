@@ -28,7 +28,7 @@ func buildQuery(fields string, filters *Filters, groupby string, serie string, f
 	}
 
 	if len(groupby) > 0 {
-		query += fmt.Sprintf(" GROUP BY %s", groupby)
+		query += fmt.Sprintf(" GROUP BY \"%s\"", groupby)
 	}
 	return
 }

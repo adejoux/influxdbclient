@@ -9,6 +9,10 @@ type TextSet struct {
 }
 
 func ConvertToTextSet(res []client.Result) (tset *TextSet) {
+	if len(res) == 0 {
+		return
+	}
+
 	if len(res[0].Series) == 0 {
 		return
 	}

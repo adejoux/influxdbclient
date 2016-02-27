@@ -78,6 +78,24 @@ func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
 	return
 }
 
+func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
+	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION \"%s\" REPLICATION 1", policy, db.db, retention)
+	if default_policy {
+		cmd += " DEFAULT"
+	}
+	res, err = db.query(cmd)
+	return
+}
+
+func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
+	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION \"%s\" REPLICATION 1", policy, db.db, retention)
+	if default_policy {
+		cmd += " DEFAULT"
+	}
+	res, err = db.query(cmd)
+	return
+}
+
 func (db *InfluxDB) ShowDB() (databases []string, err error) {
 	cmd := fmt.Sprintf("show databases")
 	res, err := db.query(cmd)
@@ -145,7 +163,7 @@ func (db *InfluxDB) WritePoints() (err error) {
 	bps := client.BatchPoints{
 		Points:           db.points[:db.count],
 		Database:         db.db,
-		Precision:			"s",
+		Precision:        "s",
 		RetentionPolicy:  "default",
 		WriteConsistency: client.ConsistencyAny,
 	}
@@ -222,5 +240,27 @@ func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, 
 		return
 	}
 	ds = ConvertToDataSet(res)
+	return
+}
+
+func (db *InfluxDB) ReadFirstPoint(fields string, filters *Filters, serie string) (result []interface{}, err error) {
+	var filterQuery FilterQuery
+	if len(*filters) > 0 {
+		filterQuery.AddFilters(filters)
+	}
+	cmd := fmt.Sprintf("SELECT \"%s\" FROM \"%s\" WHERE %s LIMIT 1", fields, serie, filterQuery.Content)
+	if db.debug {
+		fmt.Printf("query: %s\n", cmd)
+	}
+	res, err := db.queryDB(cmd, db.db)
+	if err != nil {
+		return
+	}
+
+	if len(res[0].Series) == 0 {
+		return
+	}
+
+	result = res[0].Series[0].Values[0]
 	return
 }

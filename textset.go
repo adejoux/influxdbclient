@@ -1,6 +1,6 @@
 package influxdbclient
 
-import "github.com/influxdb/influxdb/client"
+import "github.com/influxdata/influxdb/client"
 
 type TextSet struct {
 	Name  string

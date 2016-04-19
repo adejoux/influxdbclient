@@ -5,10 +5,7 @@ import "net/url"
 import "fmt"
 import "time"
 
-//
-// influxDB structure
-// contains the main structures and methods used to parse nmon files and upload data in Influxdb
-//
+// InfluxDB contains the main structures and methods used to parse nmon files and upload data in Influxdb
 type InfluxDB struct {
 	host   string
 	port   string
@@ -21,7 +18,7 @@ type InfluxDB struct {
 	con    *client.Client
 }
 
-// initialize a Influx structure
+// NewInfluxDB initialize a Influx structure
 func NewInfluxDB(host string, port string, database string, user string, pass string) *InfluxDB {
 	return &InfluxDB{host: host,
 		port:   port,
@@ -62,40 +59,56 @@ func (db *InfluxDB) query(cmd string) (res []client.Result, err error) {
 	return
 }
 
+// SetDebug allow users to setup debug mode
 func (db *InfluxDB) SetDebug(debug bool) {
 	db.debug = debug
 }
 
+// CreateDB create the database with the dbname provided
 func (db *InfluxDB) CreateDB(dbname string) (res []client.Result, err error) {
 	cmd := fmt.Sprintf("create database %s", dbname)
 	res, err = db.queryDB(cmd, dbname)
 	return
 }
 
+// DropDB drop the database named dbname
 func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
 	cmd := fmt.Sprintf("drop database %s", dbname)
 	res, err = db.queryDB(cmd, dbname)
 	return
 }
 
+// SetRetentionPolicy create a retention policy named retention. It's configured as default policy if default_policy is true
 func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION \"%s\" REPLICATION 1", policy, db.db, retention)
+	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
+
 	if default_policy {
 		cmd += " DEFAULT"
+	}
+
+	if db.debug {
+		fmt.Println(cmd)
 	}
 	res, err = db.query(cmd)
 	return
 }
 
+// UpdateRetentionPolicy update the rentetion policy
 func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION \"%s\" REPLICATION 1", policy, db.db, retention)
+	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
+
 	if default_policy {
 		cmd += " DEFAULT"
+	}
+
+	if db.debug {
+		fmt.Println(cmd)
 	}
 	res, err = db.query(cmd)
 	return
 }
 
+// ShowDB returns a rray of dbname
 func (db *InfluxDB) ShowDB() (databases []string, err error) {
 	cmd := fmt.Sprintf("show databases")
 	res, err := db.query(cmd)
@@ -121,6 +134,7 @@ func (db *InfluxDB) ShowDB() (databases []string, err error) {
 	return
 }
 
+// ExistDB returns true if the db exists
 func (db *InfluxDB) ExistDB(dbname string) (check bool, err error) {
 	dbs, err := db.ShowDB()
 	check = false
@@ -156,7 +170,7 @@ func (db *InfluxDB) AddPrecisePoint(measurement string, timestamp time.Time, fie
 	}
 
 	db.points[db.count] = point
-	db.count += 1
+	db.count++
 }
 
 func (db *InfluxDB) WritePoints() (err error) {

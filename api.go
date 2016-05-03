@@ -178,7 +178,6 @@ func (db *InfluxDB) WritePoints() (err error) {
 		Points:           db.points[:db.count],
 		Database:         db.db,
 		Precision:        "s",
-		RetentionPolicy:  "default",
 		WriteConsistency: client.ConsistencyAny,
 	}
 

@@ -256,12 +256,12 @@ func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, 
 	return
 }
 
-func (db *InfluxDB) ReadFirstPoint(fields string, filters *Filters, serie string) (result []interface{}, err error) {
+func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string) (result []interface{}, err error) {
 	var filterQuery FilterQuery
 	if len(*filters) > 0 {
 		filterQuery.AddFilters(filters)
 	}
-	cmd := fmt.Sprintf("SELECT \"%s\" FROM \"%s\" WHERE %s LIMIT 1", fields, serie, filterQuery.Content)
+	cmd := fmt.Sprintf("SELECT last(\"%s\") FROM \"%s\" WHERE %s", fields, serie, filterQuery.Content)
 	if db.debug {
 		fmt.Printf("query: %s\n", cmd)
 	}

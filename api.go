@@ -1,9 +1,13 @@
 package influxdbclient
 
-import "github.com/influxdata/influxdb/client"
-import "net/url"
+import (
+	"net/url"
+	"time"
+
+	"github.com/influxdata/influxdb/client"
+)
+
 import "fmt"
-import "time"
 
 // InfluxDB contains the main structures and methods used to parse nmon files and upload data in Influxdb
 type InfluxDB struct {
@@ -78,11 +82,11 @@ func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
 	return
 }
 
-// SetRetentionPolicy create a retention policy named retention. It's configured as default policy if default_policy is true
-func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
+// SetRetentionPolicy create a retention policy named retention. It's configured as default policy if defaultPolicy is true
+func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, defaultPolicy bool) (res []client.Result, err error) {
 	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
 
-	if default_policy {
+	if defaultPolicy {
 		cmd += " DEFAULT"
 	}
 
@@ -94,10 +98,10 @@ func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, default_
 }
 
 // UpdateRetentionPolicy update the rentetion policy
-func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, default_policy bool) (res []client.Result, err error) {
+func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defaultPolicy bool) (res []client.Result, err error) {
 	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
 
-	if default_policy {
+	if defaultPolicy {
 		cmd += " DEFAULT"
 	}
 
@@ -105,6 +109,24 @@ func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defau
 		fmt.Println(cmd)
 	}
 	res, err = db.query(cmd)
+	return
+}
+
+// GetDefaultRetentionPolicy get the default retention policy name
+func (db *InfluxDB) GetDefaultRetentionPolicy() (policyName string, err error) {
+	cmd := fmt.Sprintf("SHOW RETENTION POLICIES ON \"%s\"", db.db)
+
+	res, err := db.query(cmd)
+	if res == nil {
+		return
+	}
+	for _, policy := range res[0].Series[0].Values {
+
+		// if default policy
+		if policy[4] == true {
+			policyName = policy[0].(string)
+		}
+	}
 	return
 }
 

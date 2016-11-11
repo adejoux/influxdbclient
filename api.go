@@ -1,45 +1,77 @@
 package influxdbclient
 
 import (
-	"net/url"
 	"time"
 
-	"github.com/influxdata/influxdb/client"
+	"github.com/influxdata/influxdb/client/v2"
 )
 
 import "fmt"
 
+// InfluxDBConfig store all configuration parameters
+type InfluxDBConfig struct {
+	Host            string
+	Port            string
+	Database        string
+	User            string
+	Pass            string
+	RetentionPolicy string
+	Debug           bool
+}
+
 // InfluxDB contains the main structures and methods used to parse nmon files and upload data in Influxdb
 type InfluxDB struct {
-	host   string
-	port   string
-	db     string
-	user   string
-	pass   string
-	debug  bool
+	name   string
+	Debug  bool
 	count  int64
-	points []client.Point
-	con    *client.Client
+	points client.BatchPoints
+	client client.Client
+	policy string
 }
 
 // NewInfluxDB initialize a Influx structure
-func NewInfluxDB(host string, port string, database string, user string, pass string) *InfluxDB {
-	return &InfluxDB{host: host,
-		port:   port,
-		db:     database,
-		user:   user,
-		pass:   pass,
-		points: make([]client.Point, 10000),
-		count:  0}
+func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
+
+	db.name = cfg.Database
+	db.count = 0
+
+	if cfg.Debug {
+		db.Debug = true
+	}
+
+	influxdbURL := fmt.Sprintf("http://%s:%s", cfg.Host, cfg.Port)
+
+	conf := client.HTTPConfig{
+		Addr:     influxdbURL,
+		Username: cfg.User,
+		Password: cfg.Pass,
+	}
+
+	db.client, err = client.NewHTTPClient(conf)
+	if err != nil {
+		return
+	}
+
+	_, _, err = db.client.Ping(0)
+	if err != nil {
+		return
+	}
+
+	batchConfig := client.BatchPointsConfig{Precision: "s", Database: cfg.Database}
+
+	if len(cfg.RetentionPolicy) > 0 {
+		batchConfig.RetentionPolicy = cfg.RetentionPolicy
+	}
+
+	db.points, _ = client.NewBatchPoints(batchConfig)
+
+	return
 }
 
 // queryDB convenience function to query the database
 func (db *InfluxDB) queryDB(cmd string, dbname string) (res []client.Result, err error) {
-	query := client.Query{
-		Command:  cmd,
-		Database: dbname,
-	}
-	if response, err := db.con.Query(query); err == nil {
+	query := client.NewQuery(cmd, dbname, "")
+	if response, err := db.client.Query(query); err == nil {
 		if response.Error() != nil {
 			return res, response.Error()
 		}
@@ -50,22 +82,14 @@ func (db *InfluxDB) queryDB(cmd string, dbname string) (res []client.Result, err
 
 // query convenience function to query Influxdb
 func (db *InfluxDB) query(cmd string) (res []client.Result, err error) {
-	query := client.Query{
-		Command: cmd,
-	}
-
-	if response, err := db.con.Query(query); err == nil {
+	query := client.NewQuery(cmd, "", "")
+	if response, err := db.client.Query(query); err == nil {
 		if response.Error() != nil {
 			return res, response.Error()
 		}
 		res = response.Results
 	}
 	return
-}
-
-// SetDebug allow users to setup debug mode
-func (db *InfluxDB) SetDebug(debug bool) {
-	db.debug = debug
 }
 
 // CreateDB create the database with the dbname provided
@@ -84,13 +108,13 @@ func (db *InfluxDB) DropDB(dbname string) (res []client.Result, err error) {
 
 // SetRetentionPolicy create a retention policy named retention. It's configured as default policy if defaultPolicy is true
 func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, defaultPolicy bool) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
+	cmd := fmt.Sprintf("CREATE RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.name, retention)
 
 	if defaultPolicy {
 		cmd += " DEFAULT"
 	}
 
-	if db.debug {
+	if db.Debug {
 		fmt.Println(cmd)
 	}
 	res, err = db.query(cmd)
@@ -99,13 +123,13 @@ func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, defaultP
 
 // UpdateRetentionPolicy update the rentetion policy
 func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defaultPolicy bool) (res []client.Result, err error) {
-	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.db, retention)
+	cmd := fmt.Sprintf("ALTER RETENTION POLICY \"%s\" ON \"%s\" DURATION %s REPLICATION 1", policy, db.name, retention)
 
 	if defaultPolicy {
 		cmd += " DEFAULT"
 	}
 
-	if db.debug {
+	if db.Debug {
 		fmt.Println(cmd)
 	}
 	res, err = db.query(cmd)
@@ -114,7 +138,7 @@ func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defau
 
 // GetDefaultRetentionPolicy get the default retention policy name
 func (db *InfluxDB) GetDefaultRetentionPolicy() (policyName string, err error) {
-	cmd := fmt.Sprintf("SHOW RETENTION POLICIES ON \"%s\"", db.db)
+	cmd := fmt.Sprintf("SHOW RETENTION POLICIES ON \"%s\"", db.name)
 
 	res, err := db.query(cmd)
 	if res == nil {
@@ -138,7 +162,7 @@ func (db *InfluxDB) ShowDB() (databases []string, err error) {
 		return
 	}
 
-	if db.debug == true {
+	if db.Debug == true {
 		fmt.Println(res)
 	}
 
@@ -174,47 +198,35 @@ func (db *InfluxDB) ExistDB(dbname string) (check bool, err error) {
 	return
 }
 
+// AddPoint add standard point
 func (db *InfluxDB) AddPoint(measurement string, timestamp time.Time, fields map[string]interface{}, tags map[string]string) {
-	db.AddPrecisePoint(measurement, timestamp, fields, tags, "s")
-}
+	point, err := client.NewPoint(measurement, tags, fields, timestamp)
 
-func (db *InfluxDB) AddPrecisePoint(measurement string, timestamp time.Time, fields map[string]interface{}, tags map[string]string, precision string) {
-	point := client.Point{
-		Measurement: measurement,
-		Fields:      fields,
-		Tags:        tags,
-		Time:        timestamp,
-		Precision:   precision,
+	if err != nil {
+		fmt.Println("Error: ", err.Error())
 	}
 
-	if len(tags) > 0 {
-		point.Tags = tags
-	}
-
-	db.points[db.count] = point
+	db.points.AddPoint(point)
 	db.count++
 }
 
+// WritePoints wirte points to database
 func (db *InfluxDB) WritePoints() (err error) {
-	bps := client.BatchPoints{
-		Points:           db.points[:db.count],
-		Database:         db.db,
-		Precision:        "s",
-		WriteConsistency: client.ConsistencyAny,
-	}
-
-	_, err = db.con.Write(bps)
+	err = db.client.Write(db.points)
 	return
 }
 
+// PointsCount return the number of influxdb points
 func (db *InfluxDB) PointsCount() int64 {
 	return db.count
 }
 
+// ClearPoints reset the number of points stored
 func (db *InfluxDB) ClearPoints() {
 	db.count = 0
 }
 
+// ListMeasurement returns all measurements inside a TextSet
 func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error) {
 
 	query := "SHOW MEASUREMENTS"
@@ -225,10 +237,10 @@ func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error)
 	if len(fQuery.Content) > 0 {
 		query += " WHERE " + fQuery.Content
 	}
-	if db.debug {
+	if db.Debug {
 		fmt.Printf("query: %s\n", query)
 	}
-	res, err := db.queryDB(query, db.db)
+	res, err := db.queryDB(query, db.name)
 	if err != nil {
 		return
 	}
@@ -236,41 +248,14 @@ func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error)
 
 }
 
-func (db *InfluxDB) Connect() error {
-	u, err := url.Parse(fmt.Sprintf("http://%s:%s", db.host, db.port))
-	if err != nil {
-		return err
-	}
-
-	conf := client.Config{
-		URL:      *u,
-		Username: db.user,
-		Password: db.pass,
-	}
-
-	db.con, err = client.NewClient(conf)
-	if err != nil {
-		return err
-	}
-
-	dur, ver, err := db.con.Ping()
-	if err != nil {
-		return err
-	}
-
-	if db.debug == true {
-		fmt.Printf("time : %v, version : %s\n", dur, ver)
-	}
-
-	return err
-}
-
+// ReadPoints perform a influxdb query on meqsurements and return points inside a dataset
 func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, serie string, from string, to string, function string) (ds []*DataSet, err error) {
 	cmd := buildQuery(fields, filters, groupby, serie, from, to, function)
-	if db.debug {
+	if db.Debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
-	res, err := db.queryDB(cmd, db.db)
+
+	res, err := db.queryDB(cmd, db.name)
 	if err != nil {
 		return
 	}
@@ -278,16 +263,20 @@ func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, 
 	return
 }
 
+// ReadLastPoint perform a influxdb query on meqsurements and return the last point inside a array of interfaces
 func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string) (result []interface{}, err error) {
 	var filterQuery FilterQuery
+	cmd := fmt.Sprintf("SELECT last(\"%s\") FROM \"%s\"", fields, serie)
 	if len(*filters) > 0 {
 		filterQuery.AddFilters(filters)
+		cmd += fmt.Sprintf(" WHERE %s", filterQuery.Content)
 	}
-	cmd := fmt.Sprintf("SELECT last(\"%s\") FROM \"%s\" WHERE %s", fields, serie, filterQuery.Content)
-	if db.debug {
+
+	if db.Debug {
 		fmt.Printf("query: %s\n", cmd)
 	}
-	res, err := db.queryDB(cmd, db.db)
+
+	res, err := db.queryDB(cmd, db.name)
 	if err != nil {
 		return
 	}

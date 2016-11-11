@@ -1,7 +1,8 @@
 package influxdbclient
 
-import "github.com/influxdata/influxdb/client"
+import "github.com/influxdata/influxdb/client/v2"
 
+// TextSet Contains a text output
 type TextSet struct {
 	Name  string
 	Tags  map[string]string

@@ -1,6 +1,6 @@
 package influxdbclient
 
-import "github.com/influxdata/influxdb/client"
+import "github.com/influxdata/influxdb/client/v2"
 import "time"
 import "encoding/json"
 
@@ -15,6 +15,7 @@ type DataSet struct {
 	Datas      map[string][]float64
 }
 
+// NewDataSet provides a new DataSet properly initialized
 func NewDataSet(length int, fields []string) *DataSet {
 	ds := DataSet{TimeStamps: make([]time.Time, length), Datas: make(map[string][]float64)}
 
@@ -24,6 +25,7 @@ func NewDataSet(length int, fields []string) *DataSet {
 	return &ds
 }
 
+// ConvertToDataSet convert influxdb result in []DataSet
 func ConvertToDataSet(res []client.Result) (dsets []*DataSet) {
 	if len(res[0].Series) == 0 {
 		return

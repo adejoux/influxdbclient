@@ -35,9 +35,7 @@ func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
 	db.name = cfg.Database
 	db.count = 0
 
-	if cfg.Debug {
-		db.Debug = true
-	}
+	db.Debug = cfg.Debug
 
 	influxdbURL := fmt.Sprintf("http://%s:%s", cfg.Host, cfg.Port)
 
@@ -115,7 +113,7 @@ func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, defaultP
 	}
 
 	if db.Debug {
-		fmt.Println(cmd)
+		fmt.Printf("SetRetentionPolicy: %s\n", cmd)
 	}
 	res, err = db.query(cmd)
 	return
@@ -130,8 +128,9 @@ func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defau
 	}
 
 	if db.Debug {
-		fmt.Println(cmd)
+		fmt.Printf("UpdateRetentionPolicy: %s\n", cmd)
 	}
+
 	res, err = db.query(cmd)
 	return
 }
@@ -162,10 +161,6 @@ func (db *InfluxDB) ShowDB() (databases []string, err error) {
 		return
 	}
 
-	if db.Debug == true {
-		fmt.Println(res)
-	}
-
 	if res == nil {
 		return
 	}
@@ -176,6 +171,9 @@ func (db *InfluxDB) ShowDB() (databases []string, err error) {
 				databases = append(databases, str)
 			}
 		}
+	}
+	if db.Debug {
+		fmt.Printf("databases: %v\n", databases)
 	}
 	return
 }

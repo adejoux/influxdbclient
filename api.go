@@ -1,12 +1,13 @@
 package influxdbclient
 
 import (
+	"log"
 	"time"
+
+	"fmt"
 
 	"github.com/influxdata/influxdb/client/v2"
 )
-
-import "fmt"
 
 // InfluxDBConfig store all configuration parameters
 type InfluxDBConfig struct {
@@ -113,7 +114,7 @@ func (db *InfluxDB) SetRetentionPolicy(policy string, retention string, defaultP
 	}
 
 	if db.Debug {
-		fmt.Printf("SetRetentionPolicy: %s\n", cmd)
+		log.Printf("SetRetentionPolicy: %s\n", cmd)
 	}
 	res, err = db.query(cmd)
 	return
@@ -128,7 +129,7 @@ func (db *InfluxDB) UpdateRetentionPolicy(policy string, retention string, defau
 	}
 
 	if db.Debug {
-		fmt.Printf("UpdateRetentionPolicy: %s\n", cmd)
+		log.Printf("UpdateRetentionPolicy: %s\n", cmd)
 	}
 
 	res, err = db.query(cmd)
@@ -173,7 +174,7 @@ func (db *InfluxDB) ShowDB() (databases []string, err error) {
 		}
 	}
 	if db.Debug {
-		fmt.Printf("databases: %v\n", databases)
+		log.Printf("databases: %v\n", databases)
 	}
 	return
 }
@@ -201,7 +202,7 @@ func (db *InfluxDB) AddPoint(measurement string, timestamp time.Time, fields map
 	point, err := client.NewPoint(measurement, tags, fields, timestamp)
 
 	if err != nil {
-		fmt.Println("Error: ", err.Error())
+		log.Println("Error: ", err.Error())
 	}
 
 	db.points.AddPoint(point)
@@ -236,7 +237,7 @@ func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error)
 		query += " WHERE " + fQuery.Content
 	}
 	if db.Debug {
-		fmt.Printf("query: %s\n", query)
+		log.Printf("query: %s\n", query)
 	}
 	res, err := db.queryDB(query, db.name)
 	if err != nil {
@@ -250,7 +251,7 @@ func (db *InfluxDB) ListMeasurement(filters *Filters) (tset *TextSet, err error)
 func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, serie string, from string, to string, function string) (ds []*DataSet, err error) {
 	cmd := buildQuery(fields, filters, groupby, serie, from, to, function)
 	if db.Debug {
-		fmt.Printf("query: %s\n", cmd)
+		log.Printf("query: %s\n", cmd)
 	}
 
 	res, err := db.queryDB(cmd, db.name)
@@ -271,7 +272,7 @@ func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string)
 	}
 
 	if db.Debug {
-		fmt.Printf("query: %s\n", cmd)
+		log.Printf("query: %s\n", cmd)
 	}
 
 	res, err := db.queryDB(cmd, db.name)

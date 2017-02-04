@@ -22,12 +22,13 @@ type InfluxDBConfig struct {
 
 // InfluxDB contains the main structures and methods used to parse nmon files and upload data in Influxdb
 type InfluxDB struct {
-	name   string
-	Debug  bool
-	count  int64
-	points client.BatchPoints
-	client client.Client
-	policy string
+	name        string
+	Debug       bool
+	count       int64
+	points      client.BatchPoints
+	batchConfig client.BatchPointsConfig
+	client      client.Client
+	policy      string
 }
 
 // NewInfluxDB initialize a Influx structure
@@ -62,8 +63,8 @@ func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
 		batchConfig.RetentionPolicy = cfg.RetentionPolicy
 	}
 
+	db.batchConfig = batchConfig
 	db.points, _ = client.NewBatchPoints(batchConfig)
-
 	return
 }
 
@@ -223,6 +224,7 @@ func (db *InfluxDB) PointsCount() int64 {
 // ClearPoints reset the number of points stored
 func (db *InfluxDB) ClearPoints() {
 	db.count = 0
+	db.points, _ = client.NewBatchPoints(db.batchConfig)
 }
 
 // ListMeasurement returns all measurements inside a TextSet

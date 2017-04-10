@@ -18,6 +18,8 @@ type InfluxDBConfig struct {
 	Pass            string
 	RetentionPolicy string
 	Debug           bool
+	Secure					bool
+	SkipCertCheck   bool
 }
 
 // InfluxDB contains the main structures and methods used to parse nmon files and upload data in Influxdb
@@ -39,12 +41,21 @@ func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
 
 	db.Debug = cfg.Debug
 
-	influxdbURL := fmt.Sprintf("http://%s:%s", cfg.Host, cfg.Port)
+	http_mode := "http"
+
+	if cfg.Secure {
+		http_mode = "https"
+		}
+	influxdbURL := fmt.Sprintf("%s://%s:%s", http_mode, cfg.Host, cfg.Port)
 
 	conf := client.HTTPConfig{
 		Addr:     influxdbURL,
 		Username: cfg.User,
 		Password: cfg.Pass,
+	}
+
+  if cfg.SkipCertCheck {
+		conf.InsecureSkipVerify = true
 	}
 
 	db.client, err = client.NewHTTPClient(conf)

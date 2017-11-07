@@ -18,7 +18,7 @@ type InfluxDBConfig struct {
 	Pass            string
 	RetentionPolicy string
 	Debug           bool
-	Secure					bool
+	Secure          bool
 	SkipCertCheck   bool
 }
 
@@ -45,7 +45,7 @@ func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
 
 	if cfg.Secure {
 		http_mode = "https"
-		}
+	}
 	influxdbURL := fmt.Sprintf("%s://%s:%s", http_mode, cfg.Host, cfg.Port)
 
 	conf := client.HTTPConfig{
@@ -54,7 +54,7 @@ func NewInfluxDB(cfg InfluxDBConfig) (db InfluxDB, err error) {
 		Password: cfg.Pass,
 	}
 
-  if cfg.SkipCertCheck {
+	if cfg.SkipCertCheck {
 		conf.InsecureSkipVerify = true
 	}
 
@@ -224,6 +224,9 @@ func (db *InfluxDB) AddPoint(measurement string, timestamp time.Time, fields map
 // WritePoints wirte points to database
 func (db *InfluxDB) WritePoints() (err error) {
 	err = db.client.Write(db.points)
+	if err != nil {
+		log.Fatal(err)
+	}
 	return
 }
 
@@ -275,8 +278,8 @@ func (db *InfluxDB) ReadPoints(fields string, filters *Filters, groupby string, 
 	return
 }
 
-// ReadLastPoint perform a influxdb query on meqsurements and return the last point inside a array of interfaces
-func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string) (result []interface{}, err error) {
+// ReadLastPoint perform a influxdb query on meqsurements and return the last point as string
+func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string) (result string, err error) {
 	var filterQuery FilterQuery
 	cmd := fmt.Sprintf("SELECT last(\"%s\") FROM \"%s\"", fields, serie)
 	if len(*filters) > 0 {
@@ -297,6 +300,6 @@ func (db *InfluxDB) ReadLastPoint(fields string, filters *Filters, serie string)
 		return
 	}
 
-	result = res[0].Series[0].Values[0]
+	result = res[0].Series[0].Values[0][1].(string)
 	return
 }
